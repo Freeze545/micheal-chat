@@ -3,6 +3,18 @@
  * API OpenAI-compatible (Groq / OpenAI) via OPENAI_API_KEY.
  */
 require('dotenv').config();
+// Assemble split API key parts (Render MCP $file size quirk)
+(function assembleKey() {
+  if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 20) return;
+  const parts = [];
+  for (let i = 0; i < 20; i++) {
+    const p = process.env['OPENAI_API_KEY_P' + i];
+    if (!p) break;
+    parts.push(p);
+  }
+  if (parts.length) process.env.OPENAI_API_KEY = parts.join('');
+})();
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
