@@ -13,3 +13,15 @@ services:
         value: qwen/qwen3.8-27b
       - key: OPENAI_API_KEY
         sync: false
+      - key: IMAGE_MODEL
+        value: dall-e-3
+      - key: IMAGE_API_KEY
+        sync: false
+      - key: IMAGE_BASE_URL
+        sync: false
+      - key: VIDEO_API_KEY
+        sync: false
+      - key: VIDEO_API_URL
+        sync: false
+      - key: VIDEO_PROVIDER
+        value: stub

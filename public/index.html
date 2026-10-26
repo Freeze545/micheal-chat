@@ -2,9 +2,10 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Micheal — Assistant Cloud</title>
-  <meta name="description" content="Micheal, assistant intelligent propulsé par le cloud pour Lucas." />
+  <meta name="description" content="Micheal, assistant intelligent propulsé par le cloud pour Lucas. Chat, photos, vidéo, voix et caméra." />
+  <meta name="theme-color" content="#0b0e14" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -13,20 +14,10 @@
 </head>
 <body>
   <div class="app">
-    <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-brand">
         <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 40 40" width="36" height="36">
-            <defs>
-              <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#5b8def"/>
-                <stop offset="100%" stop-color="#3d6fd9"/>
-              </linearGradient>
-            </defs>
-            <circle cx="20" cy="20" r="18" fill="url(#cloudGrad)" opacity="0.2"/>
-            <path d="M12 22c0-3.3 2.5-6 5.6-6 0.4-2.4 2.5-4.2 5-4.2 2.8 0 5.1 2.2 5.2 5 2.1 0.3 3.7 2.1 3.7 4.3 0 2.4-2 4.4-4.4 4.4H16.4C14 25.5 12 23.5 12 21.1z" fill="url(#cloudGrad)"/>
-          </svg>
+          <img src="/avatar.svg" alt="" width="36" height="36" class="brand-avatar" />
         </div>
         <div class="brand-text">
           <span class="brand-name" id="sidebarName">Micheal</span>
@@ -44,6 +35,13 @@
           <span class="status-dot" id="statusDot"></span>
           <span id="statusLabel">Connexion…</span>
         </div>
+        <ul class="cap-list" id="capList" aria-label="Capacités">
+          <li data-cap="chat">Chat</li>
+          <li data-cap="image">Photos</li>
+          <li data-cap="video">Vidéo</li>
+          <li data-cap="voice">Voix</li>
+          <li data-cap="camera">Caméra</li>
+        </ul>
         <p class="sidebar-hint">Propulsé par le cloud · Québec</p>
       </div>
 
@@ -57,14 +55,13 @@
       </div>
     </aside>
 
-    <!-- Main chat -->
     <main class="main">
       <header class="chat-header">
         <button type="button" class="btn-icon mobile-only" id="btnToggleSidebar" aria-label="Menu">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
         <div class="header-identity">
-          <img src="/avatar.jpg" alt="Micheal" class="header-avatar" id="headerAvatar" width="40" height="40" />
+          <img src="/avatar.svg" alt="Micheal" class="header-avatar" id="headerAvatar" width="40" height="40" />
           <div>
             <h1 class="header-name" id="headerName">Micheal</h1>
             <p class="header-status" id="headerStatus">
@@ -80,28 +77,71 @@
         </button>
       </header>
 
-      <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions">
-        <!-- filled by JS -->
-      </div>
+      <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
 
       <div class="composer-wrap">
+        <div class="attach-preview" id="attachPreview" hidden>
+          <img id="attachThumb" alt="Aperçu pièce jointe" />
+          <button type="button" class="btn-icon attach-clear" id="btnClearAttach" aria-label="Retirer la pièce jointe">×</button>
+        </div>
+
+        <div class="mode-bar" id="modeBar" role="toolbar" aria-label="Modes">
+          <button type="button" class="mode-btn active" data-mode="chat" title="Chat">💬 Chat</button>
+          <button type="button" class="mode-btn" data-mode="image" title="Créer une photo">🖼️ Photo</button>
+          <button type="button" class="mode-btn" data-mode="video" title="Créer une vidéo">🎬 Vidéo</button>
+        </div>
+
         <form class="composer" id="composer" autocomplete="off">
+          <div class="composer-tools">
+            <button type="button" class="tool-btn" id="btnMic" title="Parler (micro)" aria-label="Micro">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+              </svg>
+            </button>
+            <button type="button" class="tool-btn" id="btnCam" title="Montrer à la caméra" aria-label="Caméra">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+              </svg>
+            </button>
+          </div>
           <textarea
             id="input"
             rows="1"
-            placeholder="Écris un message à Micheal…"
+            placeholder="Écris à Micheal, ou dicte avec le micro…"
             aria-label="Message"
           ></textarea>
           <button type="submit" class="btn-send" id="btnSend" aria-label="Envoyer" disabled>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </button>
         </form>
-        <p class="composer-footnote">Micheal peut faire des erreurs. Vérifie les infos importantes.</p>
+        <p class="composer-footnote" id="composerHint">Micheal peut faire des erreurs. Micro · caméra · photos · vidéo.</p>
       </div>
     </main>
   </div>
 
-  <!-- Settings panel -->
+  <!-- Camera modal -->
+  <div class="modal" id="cameraModal" hidden>
+    <div class="modal-card camera-card">
+      <div class="modal-header">
+        <h2>Caméra</h2>
+        <button type="button" class="btn-icon" id="btnCloseCam" aria-label="Fermer">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="camera-stage">
+        <video id="camVideo" autoplay playsinline muted></video>
+        <canvas id="camCanvas" hidden></canvas>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="btnCamCancel">Annuler</button>
+        <button type="button" class="btn-primary" id="btnCamCapture">Capturer</button>
+      </div>
+      <p class="settings-note">La capture sera jointe à ton prochain message pour que Micheal voie ce que tu montres.</p>
+    </div>
+  </div>
+
+  <!-- Settings -->
   <div class="overlay" id="overlay" hidden></div>
   <aside class="settings-panel" id="settingsPanel" aria-hidden="true" role="dialog" aria-labelledby="settingsTitle">
     <div class="settings-header">
@@ -131,7 +171,7 @@
         <button type="button" class="btn-secondary" id="btnResetSettings">Réinitialiser</button>
         <button type="button" class="btn-primary" id="btnSaveSettings">Enregistrer</button>
       </div>
-      <p class="settings-note">Les réglages sont sauvegardés localement dans ton navigateur.</p>
+      <p class="settings-note">Réglages locaux dans ton navigateur. Les clés API se configurent sur le serveur (Render), pas ici.</p>
     </div>
   </aside>
 

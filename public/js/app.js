@@ -1,27 +1,30 @@
 /**
- * Micheal Chat — frontend
+ * Micheal Chat — frontend (chat + photo + vidéo + micro + caméra)
+ * Avatar : marque abstraite /avatar.svg (pas de visage humain)
  */
 (function () {
   "use strict";
 
   const STORAGE_KEY = "micheal-settings-v1";
   const HISTORY_KEY = "micheal-history-v1";
+  const AVATAR = "/avatar.svg";
 
   const DEFAULTS = {
     displayName: "Micheal",
     personality: "Professionnel, clair, québécois casual",
     systemPrompt: `Tu es Micheal, un assistant intelligent professionnel propulsé par le cloud.
 Tu aides Lucas, qui vit au Québec. Réponds en français québécois casual — naturel, clair, utile.
-Sois concis mais complet. Tu as accès à des capacités cloud avancées : raisonnement, analyse, rédaction, planification.
+Sois concis mais complet. Tu as accès à des capacités cloud avancées : raisonnement, analyse, rédaction, planification,
+création de photos, création de vidéos (si configuré), et analyse d'images/caméra.
 Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.`,
     temperature: 0.7,
   };
 
   const SUGGESTIONS = [
     "Salut Micheal, présente-toi",
+    "Crée une photo d’un lever de soleil sur le Saint-Laurent",
+    "Prépare un prompt vidéo d’un drone au-dessus de Québec",
     "Aide-moi à planifier ma semaine",
-    "Quelles sont tes capacités cloud ?",
-    "Rédige un courriel pro poliment",
   ];
 
   const els = {
@@ -49,12 +52,32 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
     tempValue: document.getElementById("tempValue"),
     btnSaveSettings: document.getElementById("btnSaveSettings"),
     btnResetSettings: document.getElementById("btnResetSettings"),
+    btnMic: document.getElementById("btnMic"),
+    btnCam: document.getElementById("btnCam"),
+    modeBar: document.getElementById("modeBar"),
+    attachPreview: document.getElementById("attachPreview"),
+    attachThumb: document.getElementById("attachThumb"),
+    btnClearAttach: document.getElementById("btnClearAttach"),
+    cameraModal: document.getElementById("cameraModal"),
+    camVideo: document.getElementById("camVideo"),
+    camCanvas: document.getElementById("camCanvas"),
+    btnCloseCam: document.getElementById("btnCloseCam"),
+    btnCamCancel: document.getElementById("btnCamCancel"),
+    btnCamCapture: document.getElementById("btnCamCapture"),
+    composerHint: document.getElementById("composerHint"),
+    capList: document.getElementById("capList"),
   };
 
   let settings = loadSettings();
   let history = loadHistory();
   let busy = false;
   let apiMode = "unknown";
+  let caps = { chat: true, image: false, video: false, vision: false, voice: true, camera: true };
+  let mode = "chat"; // chat | image | video
+  let pendingAttach = null; // data URL from camera
+  let recognition = null;
+  let listening = false;
+  let camStream = null;
 
   function loadSettings() {
     try {
@@ -80,8 +103,34 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
   }
 
   function persistHistory() {
-    const slim = history.slice(-40);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(slim));
+    // Strip huge base64 from old entries when persisting lightly — keep last 30 text-ish
+    const slim = history.slice(-30).map((m) => {
+      if (typeof m.content === "string") return m;
+      // Keep multimodal but cap: store as-is for session; if too big, keep text only
+      try {
+        const s = JSON.stringify(m);
+        if (s.length > 400000) {
+          return { role: m.role, content: extractPlain(m.content) + "\n[image jointe omise de l’historique local]" };
+        }
+      } catch { /* ignore */ }
+      return m;
+    });
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(slim));
+    } catch {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-10).map((m) => ({
+        role: m.role,
+        content: extractPlain(m.content),
+      }))));
+    }
+  }
+
+  function extractPlain(content) {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+    }
+    return String(content || "");
   }
 
   function applyName() {
@@ -89,7 +138,21 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
     els.headerName.textContent = n;
     els.sidebarName.textContent = n;
     document.title = `${n} — Assistant Cloud`;
-    els.input.placeholder = `Écris un message à ${n}…`;
+    updatePlaceholder();
+  }
+
+  function updatePlaceholder() {
+    const n = settings.displayName || "Micheal";
+    if (mode === "image") {
+      els.input.placeholder = `Décris la photo à créer…`;
+      els.composerHint.textContent = "Mode photo — Micheal génère une image à partir de ton prompt.";
+    } else if (mode === "video") {
+      els.input.placeholder = `Décris la vidéo à créer…`;
+      els.composerHint.textContent = "Mode vidéo — branché si VIDEO_API_* est configuré, sinon guide clair.";
+    } else {
+      els.input.placeholder = `Écris à ${n}, ou dicte avec le micro…`;
+      els.composerHint.textContent = "Micheal peut faire des erreurs. Micro · caméra · photos · vidéo.";
+    }
   }
 
   function buildSystemPrompt() {
@@ -103,11 +166,28 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
     return prompt;
   }
 
+  function setCapPills() {
+    if (!els.capList) return;
+    els.capList.querySelectorAll("[data-cap]").forEach((li) => {
+      const key = li.getAttribute("data-cap");
+      const on =
+        key === "chat" ? true :
+        key === "voice" || key === "camera" ? true :
+        Boolean(caps[key]);
+      li.classList.toggle("on", on);
+      li.classList.toggle("off", !on);
+      if (key === "image" && !caps.image) li.title = "Ajoute IMAGE_API_KEY / OpenAI images";
+      if (key === "video" && !caps.video) li.title = "Ajoute VIDEO_API_KEY + VIDEO_API_URL";
+    });
+  }
+
   async function fetchStatus() {
     try {
       const res = await fetch("/api/status");
       const data = await res.json();
       apiMode = data.mode || "demo";
+      caps = Object.assign(caps, data.capabilities || {});
+      setCapPills();
       els.statusPill.classList.remove("cloud", "demo");
       els.statusPill.classList.add(apiMode === "cloud" ? "cloud" : "demo");
       if (apiMode === "cloud") {
@@ -134,9 +214,9 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
     const wrap = document.createElement("div");
     wrap.className = "welcome";
     wrap.innerHTML = `
-      <img src="/avatar.jpg" alt="${escapeHtml(name)}" class="welcome-avatar" width="88" height="88" />
+      <img src="${AVATAR}" alt="${escapeHtml(name)}" class="welcome-avatar" width="96" height="96" />
       <h2>Bonjour, Lucas</h2>
-      <p>Je suis <strong>${escapeHtml(name)}</strong>, ton assistant intelligent propulsé par le cloud. Comment puis-je t'aider aujourd'hui ?</p>
+      <p>Je suis <strong>${escapeHtml(name)}</strong> — chat, photos, vidéo, micro et caméra. Qu’est-ce qu’on fait ?</p>
       <div class="suggestions"></div>
     `;
     const sug = wrap.querySelector(".suggestions");
@@ -146,7 +226,13 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
       b.className = "suggestion";
       b.textContent = text;
       b.addEventListener("click", () => {
-        els.input.value = text;
+        if (/photo|image/i.test(text)) setMode("image");
+        else if (/vidéo|video/i.test(text)) setMode("video");
+        else setMode("chat");
+        els.input.value = text.replace(/^Crée une photo d[’']/, "").replace(/^Prépare un prompt vidéo d[’']/, "");
+        if (/photo/i.test(text)) els.input.value = "Un lever de soleil doré sur le fleuve Saint-Laurent, style cinématique";
+        if (/vidéo|video/i.test(text)) els.input.value = "Drone au-dessus de la vieille ville de Québec au crépuscule, mouvement fluide";
+        if (/Salut|planifier/i.test(text)) els.input.value = text;
         updateSendState();
         els.composer.requestSubmit();
       });
@@ -163,7 +249,7 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
       .replace(/"/g, "&quot;");
   }
 
-  function appendMessage(role, content, meta) {
+  function appendMessage(role, content, meta, media) {
     const welcome = els.messages.querySelector(".welcome");
     if (welcome) welcome.remove();
 
@@ -172,7 +258,7 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
 
     if (role === "assistant") {
       const img = document.createElement("img");
-      img.src = "/avatar.jpg";
+      img.src = AVATAR;
       img.alt = settings.displayName || "Micheal";
       img.className = "msg-avatar";
       img.width = 32;
@@ -194,7 +280,43 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
       role === "assistant" ? settings.displayName || "Micheal" : "Lucas";
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    bubble.textContent = content;
+
+    const plain = extractPlain(content);
+    if (media && media.imageDataUrl) {
+      const wrap = document.createElement("div");
+      wrap.className = "attach-inline";
+      const im = document.createElement("img");
+      im.src = media.imageDataUrl;
+      im.alt = "Photo jointe";
+      wrap.appendChild(im);
+      bubble.appendChild(wrap);
+    }
+    if (plain) {
+      const textNode = document.createElement("span");
+      textNode.textContent = plain;
+      bubble.appendChild(textNode);
+    }
+
+    if (media && media.resultImage) {
+      const mw = document.createElement("div");
+      mw.className = "bubble-media";
+      const im = document.createElement("img");
+      im.src = media.resultImage;
+      im.alt = "Image générée";
+      mw.appendChild(im);
+      bubble.appendChild(mw);
+    }
+    if (media && media.resultVideo) {
+      const mw = document.createElement("div");
+      mw.className = "bubble-media";
+      const v = document.createElement("video");
+      v.src = media.resultVideo;
+      v.controls = true;
+      v.playsInline = true;
+      mw.appendChild(v);
+      bubble.appendChild(mw);
+    }
+
     body.appendChild(metaEl);
     body.appendChild(bubble);
 
@@ -216,7 +338,7 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
     row.className = "msg-row assistant";
     row.id = "typing-row";
     row.innerHTML = `
-      <img src="/avatar.jpg" alt="" class="msg-avatar" width="32" height="32" />
+      <img src="${AVATAR}" alt="" class="msg-avatar" width="32" height="32" />
       <div class="msg-body">
         <div class="msg-meta">${escapeHtml(settings.displayName || "Micheal")}</div>
         <div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>
@@ -237,11 +359,20 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
     el.textContent = msg;
     els.messages.appendChild(el);
     els.messages.scrollTop = els.messages.scrollHeight;
-    setTimeout(() => el.remove(), 8000);
+    setTimeout(() => el.remove(), 10000);
+  }
+
+  function showInfo(msg) {
+    const el = document.createElement("div");
+    el.className = "info-toast";
+    el.textContent = msg;
+    els.messages.appendChild(el);
+    els.messages.scrollTop = els.messages.scrollHeight;
+    setTimeout(() => el.remove(), 10000);
   }
 
   function updateSendState() {
-    const has = els.input.value.trim().length > 0;
+    const has = els.input.value.trim().length > 0 || pendingAttach;
     els.btnSend.disabled = !has || busy;
   }
 
@@ -251,15 +382,61 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
     ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
   }
 
+  function setMode(next) {
+    mode = next;
+    els.modeBar.querySelectorAll(".mode-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.mode === mode);
+    });
+    updatePlaceholder();
+  }
+
+  function clearAttach() {
+    pendingAttach = null;
+    els.attachPreview.hidden = true;
+    els.attachThumb.removeAttribute("src");
+    updateSendState();
+  }
+
+  function setAttach(dataUrl) {
+    pendingAttach = dataUrl;
+    els.attachThumb.src = dataUrl;
+    els.attachPreview.hidden = false;
+    updateSendState();
+  }
+
+  /* ——— Chat / Image / Video send ——— */
   async function sendMessage(text) {
-    if (!text || busy) return;
+    if (busy) return;
+    const trimmed = (text || "").trim();
+    if (!trimmed && !pendingAttach) return;
+
+    if (mode === "image") {
+      return generateImage(trimmed || "une scène créative");
+    }
+    if (mode === "video") {
+      return generateVideo(trimmed || "une scène cinématique courte");
+    }
+
     busy = true;
     updateSendState();
 
-    appendMessage("user", text);
-    history.push({ role: "user", content: text });
-    persistHistory();
+    const attach = pendingAttach;
+    clearAttach();
 
+    let content;
+    if (attach) {
+      content = [
+        { type: "text", text: trimmed || "Voici ce que je te montre avec ma caméra. Qu’est-ce que tu vois ?" },
+        { type: "image_url", image_url: { url: attach } },
+      ];
+      appendMessage("user", trimmed || "Voici ce que je te montre.", null, { imageDataUrl: attach });
+    } else {
+      content = trimmed;
+      appendMessage("user", trimmed);
+    }
+
+    history.push({ role: "user", content });
+    persistHistory();
     showTyping();
 
     try {
@@ -284,13 +461,13 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
         return;
       }
 
-      const content = data.content || "";
+      const reply = data.content || "";
       let badge = null;
       if (data.mode === "demo") badge = "Mode démo";
       else if (data.model) badge = `Cloud · ${data.model}`;
 
-      appendMessage("assistant", content, badge);
-      history.push({ role: "assistant", content });
+      appendMessage("assistant", reply, badge);
+      history.push({ role: "assistant", content: reply });
       persistHistory();
     } catch (err) {
       hideTyping();
@@ -300,6 +477,200 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
 
     busy = false;
     updateSendState();
+    els.input.focus();
+  }
+
+  async function generateImage(prompt) {
+    busy = true;
+    updateSendState();
+    appendMessage("user", `🖼️ Photo : ${prompt}`);
+    history.push({ role: "user", content: `[Demande de photo] ${prompt}` });
+    persistHistory();
+    showTyping();
+
+    try {
+      const res = await fetch("/api/image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await res.json();
+      hideTyping();
+
+      if (!res.ok || data.error) {
+        const msg = data.error || "Erreur image";
+        appendMessage("assistant", msg, "Images");
+        history.push({ role: "assistant", content: msg });
+        persistHistory();
+        busy = false;
+        updateSendState();
+        return;
+      }
+
+      const src = data.url || data.b64;
+      const text = data.revisedPrompt
+        ? `Voici ta photo.\n(Prompt révisé : ${data.revisedPrompt})`
+        : "Voici ta photo.";
+      appendMessage("assistant", text, `Image · ${data.model || "api"}`, { resultImage: src });
+      history.push({ role: "assistant", content: text + (src ? `\n[image: ${src.slice(0, 80)}…]` : "") });
+      persistHistory();
+    } catch (err) {
+      hideTyping();
+      showError("Échec de la génération d’image.");
+      console.error(err);
+    }
+    busy = false;
+    updateSendState();
+  }
+
+  async function generateVideo(prompt) {
+    busy = true;
+    updateSendState();
+    appendMessage("user", `🎬 Vidéo : ${prompt}`);
+    history.push({ role: "user", content: `[Demande de vidéo] ${prompt}` });
+    persistHistory();
+    showTyping();
+
+    try {
+      const res = await fetch("/api/video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await res.json();
+      hideTyping();
+
+      if (data.stub || !data.ok) {
+        const steps = (data.nextSteps || []).map((s, i) => `${i + 1}. ${s}`).join("\n");
+        const msg =
+          (data.message || data.error || "Vidéo non configurée.") +
+          (steps ? `\n\nProchaines étapes :\n${steps}` : "");
+        appendMessage("assistant", msg, "Vidéo · stub");
+        history.push({ role: "assistant", content: msg });
+        persistHistory();
+        busy = false;
+        updateSendState();
+        return;
+      }
+
+      const text = `Vidéo (${data.provider}) — statut : ${data.status || "ok"}`;
+      appendMessage("assistant", text, `Vidéo · ${data.provider}`, data.url ? { resultVideo: data.url } : null);
+      history.push({ role: "assistant", content: text + (data.url ? `\n${data.url}` : "") });
+      persistHistory();
+    } catch (err) {
+      hideTyping();
+      showError("Échec de la requête vidéo.");
+      console.error(err);
+    }
+    busy = false;
+    updateSendState();
+  }
+
+  /* ——— Voice (Web Speech) ——— */
+  function setupSpeech() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      els.btnMic.title = "Reconnaissance vocale non supportée sur ce navigateur (essaie Chrome)";
+      return;
+    }
+    recognition = new SR();
+    recognition.lang = "fr-CA";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    recognition.onstart = () => {
+      listening = true;
+      els.btnMic.classList.add("recording");
+    };
+    recognition.onend = () => {
+      listening = false;
+      els.btnMic.classList.remove("recording");
+    };
+    recognition.onerror = (e) => {
+      listening = false;
+      els.btnMic.classList.remove("recording");
+      if (e.error !== "aborted" && e.error !== "no-speech") {
+        showInfo("Micro : " + e.error + ". Autorise le micro dans le navigateur.");
+      }
+    };
+    recognition.onresult = (event) => {
+      let finalText = "";
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += t;
+        else interim += t;
+      }
+      if (finalText) {
+        els.input.value = (els.input.value ? els.input.value + " " : "") + finalText.trim();
+        updateSendState();
+        autoResize();
+      } else if (interim) {
+        // show interim lightly by not overwriting committed text — skip for simplicity
+      }
+    };
+  }
+
+  function toggleMic() {
+    if (!recognition) {
+      showInfo("La dictée vocale n’est pas dispo ici. Utilise Chrome/Edge, ou tape ton message.");
+      return;
+    }
+    if (listening) {
+      recognition.stop();
+      return;
+    }
+    try {
+      recognition.start();
+    } catch (e) {
+      showInfo("Impossible de démarrer le micro.");
+    }
+  }
+
+  /* ——— Camera ——— */
+  async function openCamera() {
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: false,
+      });
+      els.camVideo.srcObject = camStream;
+      els.cameraModal.hidden = false;
+    } catch (err) {
+      // try user-facing
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        els.camVideo.srcObject = camStream;
+        els.cameraModal.hidden = false;
+      } catch (e2) {
+        showError("Caméra inaccessible. Autorise l’accès caméra dans ton navigateur (HTTPS requis).");
+      }
+    }
+  }
+
+  function closeCamera() {
+    els.cameraModal.hidden = true;
+    if (camStream) {
+      camStream.getTracks().forEach((t) => t.stop());
+      camStream = null;
+    }
+    els.camVideo.srcObject = null;
+  }
+
+  function captureCamera() {
+    const video = els.camVideo;
+    const canvas = els.camCanvas;
+    const w = video.videoWidth || 640;
+    const h = video.videoHeight || 480;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    setAttach(dataUrl);
+    setMode("chat");
+    closeCamera();
+    showInfo("Photo capturée — ajoute un message si tu veux, puis envoie.");
     els.input.focus();
   }
 
@@ -326,14 +697,22 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
       return;
     }
     clearMessages();
-    history.forEach((m) => appendMessage(m.role, m.content));
+    history.forEach((m) => {
+      const plain = extractPlain(m.content);
+      let media = null;
+      if (Array.isArray(m.content)) {
+        const img = m.content.find((p) => p.type === "image_url");
+        if (img?.image_url?.url) media = { imageDataUrl: img.image_url.url };
+      }
+      appendMessage(m.role, plain, null, media);
+    });
   }
 
   /* Events */
   els.composer.addEventListener("submit", (e) => {
     e.preventDefault();
     const text = els.input.value.trim();
-    if (!text) return;
+    if (!text && !pendingAttach) return;
     els.input.value = "";
     autoResize();
     updateSendState();
@@ -355,6 +734,8 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
   els.btnNewChat.addEventListener("click", () => {
     history = [];
     persistHistory();
+    clearAttach();
+    setMode("chat");
     showWelcome();
     els.sidebar.classList.remove("open");
   });
@@ -394,10 +775,24 @@ Ne prétends jamais être un bot local limité ; tu es Micheal, assistant cloud.
     applyName();
   });
 
+  els.modeBar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".mode-btn");
+    if (!btn) return;
+    setMode(btn.dataset.mode);
+  });
+
+  els.btnMic.addEventListener("click", toggleMic);
+  els.btnCam.addEventListener("click", openCamera);
+  els.btnCloseCam.addEventListener("click", closeCamera);
+  els.btnCamCancel.addEventListener("click", closeCamera);
+  els.btnCamCapture.addEventListener("click", captureCamera);
+  els.btnClearAttach.addEventListener("click", clearAttach);
+
   /* Init */
   applyName();
   renderHistory();
   fetchStatus();
+  setupSpeech();
   updateSendState();
   els.input.focus();
 })();

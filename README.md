@@ -1,69 +1,58 @@
 # Micheal Chat
 
-Assistant intelligent **Micheal** — prototype web cloud pour Lucas (Québec).  
-Interface en français, thème sombre professionnel, personnalisable.
+Assistant intelligent **Micheal** — chat cloud moderne pour Lucas (Québec).  
+Interface française, avatar **abstrait** (pas de photo humaine), photos · vidéo · micro · caméra.
 
-## Démarrage rapide
+Live : https://micheal-chat.onrender.com
+
+## Démarrage
 
 ```bash
-cd /workspace/micheal-chat
+cd micheal-chat
+cp .env.example .env   # puis ajoute tes clés
 npm install
 npm start
 ```
 
-Ouvre ensuite : **http://localhost:3847**
+→ http://localhost:3847
 
-Sans clé API, le site fonctionne en **mode démo** (réponses mock intelligentes qui expliquent comment activer le cloud).
+## Capacités
 
-## Activer un modèle fort (cloud)
+| Fonction | Comment |
+|----------|---------|
+| Chat | `OPENAI_API_KEY` (+ modèle fort recommandé) |
+| Photos | `IMAGE_API_KEY` ou OpenAI images (`dall-e-3`) |
+| Vidéo | `VIDEO_API_KEY` + `VIDEO_API_URL` (sinon stub) |
+| Micro | Web Speech API `fr-CA` (Chrome/Edge) |
+| Caméra | `getUserMedia` → image jointe au message |
 
-1. Copie le fichier d’exemple :
-   ```bash
-   cp .env.example .env
-   ```
-2. Édite `.env` et ajoute ta clé :
-   ```env
-   OPENAI_API_KEY=sk-...
-   OPENAI_MODEL=gpt-4o
-   ```
-3. Redémarre :
-   ```bash
-   npm start
-   ```
+Voir **[plan.md](./plan.md)** pour les clés, le passage à un modèle « excellent », et l’esquisse Stripe.
 
-Modèles suggérés : `gpt-4o`, `gpt-4o-mini`, ou tout modèle compatible OpenAI via `OPENAI_BASE_URL`.
+## Avatar
 
-## Fonctionnalités
-
-- Chat moderne (thème sombre, avatar professionnel)
-- Badge **Cloud** / **Mode démo** selon la présence de `OPENAI_API_KEY`
-- Panneau **Paramètres** : nom affiché, personnalité, prompt système, température
-- Historique local (navigateur)
-- API `POST /api/chat` et `GET /api/status`
+Micheal utilise `/public/avatar.svg` — marque nuage / IA abstraite. **Aucune photo de visage humain.**
 
 ## Structure
 
 ```
 micheal-chat/
-├── server.js          # Express + route chat
-├── package.json
-├── .env.example
+├── plan.md
+├── server.js              # /api/chat, /api/image, /api/video, /api/status
 ├── public/
 │   ├── index.html
-│   ├── avatar.jpg
+│   ├── avatar.svg         # avatar non-humain
 │   ├── favicon.svg
 │   ├── css/styles.css
 │   └── js/app.js
-└── README.md
+├── .env.example
+└── render.yaml
 ```
 
-## Scripts
+## Déploiement Render
 
-| Commande     | Description                |
-|--------------|----------------------------|
-| `npm start`  | Lance le serveur           |
-| `npm run dev`| Relance auto au changement |
+Push sur `master` si le service est connecté au repo.  
+Sinon : Dashboard → Manual Deploy. Ajoute les env vars manquantes puis redeploy.
 
 ## Licence
 
-Prototype privé — usage démo.
+Prototype privé.
